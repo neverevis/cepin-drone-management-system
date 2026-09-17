@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "file:./data/dev.db"
+      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET:-troque-esta-chave-por-uma-string-aleatoria-segura}"
+      NEXTAUTH_URL: "${NEXTAUTH_URL:-http://localhost:3000}"
+    volumes:
+      # Persiste o banco de dados SQLite entre reinicializações do container.
+      # Caminho relativo em DATABASE_URL é resolvido a partir de prisma/schema.prisma.
+      - cepin_db_data:/app/prisma/data
+    restart: unless-stopped
+
+  # Para usar PostgreSQL em produção (recomendado):
+  # 1. Troque "provider = \"sqlite\"" por "provider = \"postgresql\"" em prisma/schema.prisma
+  # 2. Descomente o serviço abaixo e ajuste DATABASE_URL do serviço "app" para
+  #    postgresql://cepin:cepin@db:5432/cepin
+  #
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: cepin
+  #     POSTGRES_PASSWORD: cepin
+  #     POSTGRES_DB: cepin
+  #   volumes:
+  #     - cepin_pg_data:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+volumes:
+  cepin_db_data:
+  # cepin_pg_data:

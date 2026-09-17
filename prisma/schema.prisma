@@ -1,10 +1,21 @@
-// Schema do Sistema CEPIN - Controle do Drone DJI Mavic 3 Multispectral
-// CEPIN - Centro de Pesquisa e Inovação em Inteligência Artificial e Robótica Agrícola
-// IFSP - Câmpus Araraquara
+// ============================================================================
+// Sistema de Gestão do Drone Multiespectral do CEPIN
+// CEPIN - Centro de Pesquisa e Inovação em Inteligência Artificial e Robótica
+// Agrícola | IFSP - Câmpus Araraquara
 //
-// Observação: o SQLite não suporta enums nativos no Prisma, portanto os campos
-// que representam conjuntos fixos de valores (Role, TipoEquipamento, Status, etc.)
-// são armazenados como String e validados na camada de aplicação (ver src/lib/enums.ts).
+// Observação de design: o SQLite não possui tipo enum nativo. Campos que
+// representam conjuntos fixos de valores (papéis, status, tipos) são
+// armazenados como String e validados na camada de aplicação com zod
+// (ver src/lib/enums.ts). Os valores válidos estão documentados ao lado de
+// cada campo. Para produção com PostgreSQL, troque o "provider" abaixo para
+// "postgresql" e ajuste DATABASE_URL - o restante do schema é compatível.
+//
+// Decisão de escopo: um sistema completo de RBAC dinâmico (tabelas roles e
+// permissions) seria super-engenharia para uma instituição com 4 perfis
+// fixos. Os perfis são um campo controlado em User.role e a matriz de
+// permissões vive centralizada em src/lib/permissions.ts, aplicada no
+// backend (server actions), não apenas na interface.
+// ============================================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -15,129 +26,469 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ---------------------------------------------------------------------------
+// Usuários e projetos
+// ---------------------------------------------------------------------------
+
 model User {
   id           String   @id @default(cuid())
   name         String
   email        String   @unique
   passwordHash String
-  role         String   @default("PILOTO") // ADMIN | TECNICO | PILOTO
+  role         String   @default("USUARIO_AUTORIZADO")
+  // ADMIN | RESPONSAVEL_CEPIN | USUARIO_AUTORIZADO | OPERADOR_CONFERENTE
   registration String? // matrícula / SIAPE
+  position     String? // cargo / função
+  sector       String? // setor / unidade de lotação
   phone        String?
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  loans              Loan[]              @relation("PilotoRetirada")
-  authorizedLoans    Loan[]              @relation("AutorizadoPor")
-  usageLogs          UsageLog[]          @relation("RegistradoPor")
-  maintenanceRecords MaintenanceRecord[] @relation("ResponsavelManutencao")
+  reservations         Reservation[]        @relation("Solicitante")
+  reservationsReviewed Reservation[]        @relation("Revisor")
+  withdrawalsResponsible Withdrawal[]       @relation("ResponsavelRetirada")
+  withdrawalsDelivered Withdrawal[]         @relation("EntreguePor")
+  returnsResponsible   Return[]             @relation("ResponsavelDevolucao")
+  returnsChecked       Return[]             @relation("Conferente")
+  flightLogs           FlightLog[]          @relation("Operador")
+  batteryChargeRecords BatteryChargeRecord[] @relation("RegistradoPorCarga")
+  batteryUsageRecords  BatteryUsageRecord[] @relation("RegistradoPorUso")
+  incidentsReported    Incident[]           @relation("Reportante")
+  maintenanceRecords   MaintenanceRecord[]  @relation("ResponsavelManutencao")
+  documentsGenerated   Document[]           @relation("GeradoPor")
+  auditLogs            AuditLog[]
 
   @@map("users")
 }
 
-model Equipment {
-  id                String   @id @default(cuid())
-  name              String
-  type              String // ver src/lib/enums.ts -> TIPOS_EQUIPAMENTO
-  serialNumber      String?  @unique
-  model             String?
-  status            String   @default("DISPONIVEL") // DISPONIVEL | EM_USO | EM_MANUTENCAO | INATIVO
-  notes             String?
-  acquisitionDate   DateTime?
-  batteryCycles     Int?     @default(0)
-  batteryCycleLimit Int?     @default(200)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
 
-  loanItems          LoanItem[]
-  maintenanceRecords MaintenanceRecord[]
-  usageLogsBattery   UsageLog[]          @relation("BateriaUsada")
+  reservations Reservation[]
+  withdrawals  Withdrawal[]
+  flightLogs   FlightLog[]
+
+  @@map("projects")
+}
+
+// ---------------------------------------------------------------------------
+// Cadastro patrimonial
+// ---------------------------------------------------------------------------
+
+model Equipment {
+  id              String    @id @default(cuid())
+  name            String
+  manufacturer    String?
+  model           String?
+  patrimonyNumber String? // número de patrimônio (pode não existir)
+  serialNumber    String?   @unique
+  unit            String? // unidade de lotação
+  sector          String? // setor responsável
+  acquisitionDate DateTime?
+  status          String    @default("DISPONIVEL")
+  // DISPONIVEL | RESERVADO | EM_USO | EM_MANUTENCAO | INDISPONIVEL | BAIXADO
+  notes           String?
+  photoUrl        String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  accessories         Accessory[]
+  reservations        Reservation[]
+  withdrawals         Withdrawal[]
+  withdrawalItems     WithdrawalItem[]
+  returnItems         ReturnItem[]
+  incidents           Incident[]
+  maintenanceRecords  MaintenanceRecord[]
+  documents           Document[]
 
   @@map("equipment")
 }
 
-model Loan {
+model Accessory {
+  id           String   @id @default(cuid())
+  equipmentId  String?
+  equipment    Equipment? @relation(fields: [equipmentId], references: [id])
+  type         String
+  // CONTROLE_REMOTO | HELICES | CABO | MALETA | MODULO_RTK | FILTRO_ND | CARREGADOR | OUTRO
+  name         String
+  identifier   String? // identificador interno (nem todo acessório tem nº de patrimônio)
+  serialNumber String?
+  condition    String? // condição física relatada na última conferência
+  status       String   @default("DISPONIVEL")
+  // DISPONIVEL | EM_USO | EM_MANUTENCAO | INDISPONIVEL
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  withdrawalItems WithdrawalItem[]
+  returnItems     ReturnItem[]
+  incidents       Incident[]
+  maintenanceRecords MaintenanceRecord[]
+
+  @@map("accessories")
+}
+
+// ---------------------------------------------------------------------------
+// Baterias (módulo crítico)
+// ---------------------------------------------------------------------------
+
+model Battery {
+  id                String   @id @default(cuid())
+  code              String   @unique // ex.: BAT-1 (principal), BAT-2 (extra)...
+  isPrimary         Boolean  @default(false)
+  serialNumber      String?
+  model             String?
+  nominalCapacityMah Int?
+  acquisitionDate   DateTime?
+  status            String   @default("DISPONIVEL")
+  // DISPONIVEL | EM_USO | CARREGANDO | EM_MANUTENCAO | INDISPONIVEL
+  currentChargePercent Int   @default(100) // 0-100, informado manualmente
+  lastChargeUpdateAt DateTime @default(now())
+  cycleCount        Int?     // ciclos informados manualmente pelo usuário (nunca inferidos)
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  chargeRecords    BatteryChargeRecord[]
+  usageRecords     BatteryUsageRecord[]
+  reservations     ReservationBattery[]
+  withdrawalItems  WithdrawalItem[]
+  returnItems      ReturnItem[]
+  incidents        Incident[]
+  maintenanceRecords MaintenanceRecord[]
+
+  @@map("batteries")
+}
+
+model BatteryChargeRecord {
+  id             String    @id @default(cuid())
+  batteryId      String
+  battery        Battery   @relation(fields: [batteryId], references: [id])
+  startedAt      DateTime
+  finishedAt     DateTime?
+  chargeBefore   Int // % no início do carregamento (0-100)
+  chargeAfter    Int? // % no fim do carregamento (0-100), nulo enquanto em andamento
+  recordedById   String
+  recordedBy     User      @relation("RegistradoPorCarga", fields: [recordedById], references: [id])
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  @@map("battery_charge_records")
+}
+
+model BatteryUsageRecord {
+  id             String     @id @default(cuid())
+  batteryId      String
+  battery        Battery    @relation(fields: [batteryId], references: [id])
+  flightLogId    String?
+  flightLog      FlightLog? @relation(fields: [flightLogId], references: [id])
+  withdrawalId   String?
+  withdrawal     Withdrawal? @relation(fields: [withdrawalId], references: [id])
+  chargeBefore   Int // % antes da atividade (0-100)
+  chargeAfter    Int? // % depois da atividade (0-100)
+  cyclesReported Int? // ciclos informados manualmente nesta atividade, se houver
+  recordedById   String
+  recordedBy     User       @relation("RegistradoPorUso", fields: [recordedById], references: [id])
+  notes          String?
+  createdAt      DateTime   @default(now())
+
+  @@map("battery_usage_records")
+}
+
+// ---------------------------------------------------------------------------
+// Agenda / Solicitações (reservas)
+// ---------------------------------------------------------------------------
+
+model Reservation {
   id                 String    @id @default(cuid())
   code               String    @unique
-  pilotId            String
-  pilot              User      @relation("PilotoRetirada", fields: [pilotId], references: [id])
-  authorizedById     String?
-  authorizedBy       User?     @relation("AutorizadoPor", fields: [authorizedById], references: [id])
+  requesterId        String
+  requester          User      @relation("Solicitante", fields: [requesterId], references: [id])
+  projectId          String?
+  project            Project?  @relation(fields: [projectId], references: [id])
   purpose            String
   location           String?
-  projectName        String?
-  checkoutAt         DateTime  @default(now())
+  equipmentId        String
+  equipment          Equipment @relation(fields: [equipmentId], references: [id])
+  scheduledPickupAt  DateTime
   scheduledReturnAt  DateTime
-  returnAt           DateTime?
-  status             String    @default("ABERTA") // ABERTA | DEVOLVIDA | CANCELADA
-  preFlightChecklist String? // JSON string com checklist marcado no ato da retirada
-  checkoutNotes      String?
-  returnNotes        String?
-  returnConditionOk  Boolean?
+  notes              String?
+  status             String    @default("SOLICITADA")
+  // RASCUNHO | SOLICITADA | EM_ANALISE | APROVADA | REJEITADA | RETIRADA | EM_USO | DEVOLVIDA | CANCELADA | ENCERRADA
+  reviewedById       String?
+  reviewedBy         User?     @relation("Revisor", fields: [reviewedById], references: [id])
+  reviewedAt         DateTime?
+  reviewNotes        String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  items     LoanItem[]
-  usageLogs UsageLog[]
+  batteries   ReservationBattery[]
+  withdrawal  Withdrawal?
 
-  @@map("loans")
+  @@map("reservations")
 }
 
-model LoanItem {
-  id                  String    @id @default(cuid())
-  loanId              String
-  loan                Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  equipmentId         String
-  equipment           Equipment @relation(fields: [equipmentId], references: [id])
+model ReservationBattery {
+  id            String      @id @default(cuid())
+  reservationId String
+  reservation   Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  batteryId     String
+  battery       Battery     @relation(fields: [batteryId], references: [id])
+
+  @@unique([reservationId, batteryId])
+  @@map("reservation_batteries")
+}
+
+// ---------------------------------------------------------------------------
+// Retiradas (Termo de Retirada, Responsabilidade e Registro de Uso)
+// ---------------------------------------------------------------------------
+
+model Withdrawal {
+  id                    String    @id @default(cuid())
+  code                  String    @unique // número do termo
+  reservationId         String    @unique
+  reservation           Reservation @relation(fields: [reservationId], references: [id])
+  suapProcessNumber     String? // número do processo SUAP
+  suapDocumentNumber    String? // número do documento SUAP (registro opcional de anexação)
+  equipmentId           String
+  equipment             Equipment @relation(fields: [equipmentId], references: [id])
+  responsibleUserId     String
+  responsibleUser       User      @relation("ResponsavelRetirada", fields: [responsibleUserId], references: [id])
+  responsibleRegistration String?
+  responsiblePosition   String?
+  responsibleSector     String?
+  projectId             String?
+  project               Project?  @relation(fields: [projectId], references: [id])
+  purpose               String
+  location              String?
+  scheduledPickupAt     DateTime
+  scheduledReturnAt     DateTime
+  deliveredById         String? // operador/conferente que entregou fisicamente
+  deliveredBy           User?     @relation("EntreguePor", fields: [deliveredById], references: [id])
+  pickupChecklist       String // JSON com itens conferidos na entrega
+  pickupNotes           String?
+  status                String    @default("ABERTA")
+  // ABERTA | DEVOLVIDA | CANCELADA
+  checkoutAt            DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  items               WithdrawalItem[]
+  flightLogs          FlightLog[]
+  batteryUsageRecords BatteryUsageRecord[]
+  documents           Document[]
+  incidents           Incident[]
+  return              Return?
+
+  @@map("withdrawals")
+}
+
+model WithdrawalItem {
+  id                  String     @id @default(cuid())
+  withdrawalId        String
+  withdrawal          Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+  equipmentId         String?
+  equipment           Equipment? @relation(fields: [equipmentId], references: [id])
+  accessoryId         String?
+  accessory           Accessory? @relation(fields: [accessoryId], references: [id])
+  batteryId           String?
+  battery             Battery?   @relation(fields: [batteryId], references: [id])
+  present             Boolean    @default(true)
   conditionOut        String?
-  conditionIn         String?
-  returned            Boolean   @default(false)
-  returnedAt          DateTime?
-  batteryCyclesBefore Int?
-  batteryCyclesAfter  Int?
+  chargePercentOut    Int? // apenas para baterias
 
-  @@unique([loanId, equipmentId])
-  @@map("loan_items")
+  @@map("withdrawal_items")
 }
 
-model UsageLog {
-  id                 String    @id @default(cuid())
-  loanId             String
-  loan               Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
-  flightDate         DateTime
-  takeoffTime        String?
-  landingTime        String?
-  durationMinutes    Int
-  flightType         String    @default("OUTRO")
-  location           String?
-  weatherConditions  String?
-  batteryEquipmentId String?
-  batteryEquipment   Equipment? @relation("BateriaUsada", fields: [batteryEquipmentId], references: [id])
-  batteryCyclesUsed  Int?      @default(1)
-  incidents          String?
-  notes              String?
-  registeredById     String
-  registeredBy       User      @relation("RegistradoPor", fields: [registeredById], references: [id])
-  createdAt          DateTime  @default(now())
+// ---------------------------------------------------------------------------
+// Utilização / Diário de voo
+// ---------------------------------------------------------------------------
 
-  @@map("usage_logs")
+model FlightLog {
+  id              String     @id @default(cuid())
+  activityNumber  String     @unique
+  withdrawalId    String
+  withdrawal      Withdrawal @relation(fields: [withdrawalId], references: [id])
+  date            DateTime
+  startTime       String // HH:mm, informado pelo usuário (sem telemetria integrada)
+  endTime         String // HH:mm
+  durationMinutes Int // calculado automaticamente a partir de startTime/endTime
+  operatorId      String
+  operator        User       @relation("Operador", fields: [operatorId], references: [id])
+  projectId       String?
+  project         Project?   @relation(fields: [projectId], references: [id])
+  purpose         String?
+  location        String?
+  activityType    String     @default("OUTRO")
+  // MAPEAMENTO | AGRICULTURA_PRECISAO | PESQUISA | AULA | TREINAMENTO | INSPECAO | OUTRO
+  notes           String?
+  occurrences     String?
+  attachmentUrl   String?
+  createdAt       DateTime   @default(now())
+
+  batteryUsageRecords BatteryUsageRecord[]
+
+  @@map("flight_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Devolução
+// ---------------------------------------------------------------------------
+
+model Return {
+  id                String     @id @default(cuid())
+  withdrawalId      String     @unique
+  withdrawal        Withdrawal @relation(fields: [withdrawalId], references: [id])
+  returnedAt        DateTime   @default(now())
+  responsibleUserId String // quem devolve
+  responsibleUser   User       @relation("ResponsavelDevolucao", fields: [responsibleUserId], references: [id])
+  checkedById       String // conferente (operador/conferente)
+  checkedBy         User       @relation("Conferente", fields: [checkedById], references: [id])
+  physicalCondition String?
+  notes             String?
+  pendencies        String?
+  hasDamage         Boolean    @default(false)
+  damageDescription String?
+  closedAt          DateTime? // encerrada apenas quando pendências tratadas/justificadas
+  closedNotes       String?
+  createdAt         DateTime   @default(now())
+
+  items     ReturnItem[]
+  documents Document[]
+
+  @@map("returns")
+}
+
+model ReturnItem {
+  id               String     @id @default(cuid())
+  returnId         String
+  return           Return     @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  equipmentId      String?
+  equipment        Equipment? @relation(fields: [equipmentId], references: [id])
+  accessoryId      String?
+  accessory        Accessory? @relation(fields: [accessoryId], references: [id])
+  batteryId        String?
+  battery          Battery?   @relation(fields: [batteryId], references: [id])
+  present          Boolean    @default(true)
+  conditionIn      String?
+  chargePercentIn  Int? // apenas para baterias
+  notes            String?
+
+  @@map("return_items")
+}
+
+// ---------------------------------------------------------------------------
+// Ocorrências e Manutenção
+// ---------------------------------------------------------------------------
+
+model Incident {
+  id              String      @id @default(cuid())
+  code            String      @unique
+  equipmentId     String?
+  equipment       Equipment?  @relation(fields: [equipmentId], references: [id])
+  accessoryId     String?
+  accessory       Accessory?  @relation(fields: [accessoryId], references: [id])
+  batteryId       String?
+  battery         Battery?    @relation(fields: [batteryId], references: [id])
+  withdrawalId    String?
+  withdrawal      Withdrawal? @relation(fields: [withdrawalId], references: [id])
+  type            String
+  // AVARIA | FALHA_FUNCIONAMENTO | PROBLEMA_BATERIA | PERDA_EXTRAVIO | FURTO | ACIDENTE
+  severity        String      @default("MEDIA") // BAIXA | MEDIA | ALTA | CRITICA
+  description     String
+  reportedById    String
+  reportedBy      User        @relation("Reportante", fields: [reportedById], references: [id])
+  status          String      @default("ABERTA")
+  // ABERTA | EM_ANALISE | EM_PROVIDENCIA | RESOLVIDA | ENCERRADA
+  providences     String?
+  blocksEquipment Boolean     @default(false) // se true, bloqueia disponibilidade até liberação
+  closedAt        DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  documents Document[]
+
+  @@map("incidents")
 }
 
 model MaintenanceRecord {
-  id               String    @id @default(cuid())
-  equipmentId      String
-  equipment        Equipment @relation(fields: [equipmentId], references: [id])
-  type             String // PREVENTIVA | CORRETIVA | CALIBRACAO | ATUALIZACAO_FIRMWARE | LIMPEZA
-  status           String    @default("AGENDADA") // AGENDADA | EM_ANDAMENTO | CONCLUIDA | CANCELADA
+  id               String     @id @default(cuid())
+  code             String     @unique
+  equipmentId      String?
+  equipment        Equipment? @relation(fields: [equipmentId], references: [id])
+  accessoryId      String?
+  accessory        Accessory? @relation(fields: [accessoryId], references: [id])
+  batteryId        String?
+  battery          Battery?   @relation(fields: [batteryId], references: [id])
+  type             String
+  // PREVENTIVA | CORRETIVA | CALIBRACAO | ATUALIZACAO_FIRMWARE | LIMPEZA | INSPECAO
+  status           String     @default("AGENDADA") // AGENDADA | EM_ANDAMENTO | CONCLUIDA | CANCELADA
   scheduledDate    DateTime?
   completedDate    DateTime?
   description      String
   cost             Float?
   externalProvider String?
   responsibleId    String?
-  responsible      User?     @relation("ResponsavelManutencao", fields: [responsibleId], references: [id])
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  responsible      User?      @relation("ResponsavelManutencao", fields: [responsibleId], references: [id])
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  documents Document[]
 
   @@map("maintenance_records")
+}
+
+// ---------------------------------------------------------------------------
+// Documentos, auditoria e configurações
+// ---------------------------------------------------------------------------
+
+model Document {
+  id                String    @id @default(cuid())
+  kind              String
+  // TERMO_RETIRADA_PDF | COMPROVANTE_DEVOLUCAO_PDF | OUTRO
+  title             String
+  withdrawalId      String?
+  withdrawal        Withdrawal? @relation(fields: [withdrawalId], references: [id])
+  returnId          String?
+  return            Return?     @relation(fields: [returnId], references: [id])
+  equipmentId       String?
+  equipment         Equipment?  @relation(fields: [equipmentId], references: [id])
+  incidentId        String?
+  incident          Incident?   @relation(fields: [incidentId], references: [id])
+  maintenanceId     String?
+  maintenance       MaintenanceRecord? @relation(fields: [maintenanceId], references: [id])
+  externalReference String? // ex.: "Anexado ao SUAP - Processo 23000.xxxx/2024"
+  generatedById     String
+  generatedBy       User        @relation("GeradoPor", fields: [generatedById], references: [id])
+  createdAt         DateTime    @default(now())
+
+  @@map("documents")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String // CREATE | UPDATE | DELETE | APPROVE | REJECT | STATUS_CHANGE | LOGIN | GENERATE_PDF
+  entityType String // ex.: "Equipment", "Battery", "Reservation"...
+  entityId   String?
+  summary    String // descrição legível do que aconteceu
+  beforeJson String?
+  afterJson  String?
+  createdAt  DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
 }

@@ -32,14 +32,23 @@ export function formatMinutes(minutes: number): string {
   return `${h}h${m > 0 ? ` ${m}min` : ""}`;
 }
 
-export async function generateLoanCode(
+export async function generateSequentialCode(
+  prefix: string,
   countFn: () => Promise<number>
 ): Promise<string> {
   const count = await countFn();
   const year = new Date().getFullYear();
-  return `RET-${year}-${String(count + 1).padStart(4, "0")}`;
+  return `${prefix}-${year}-${String(count + 1).padStart(4, "0")}`;
 }
 
 export function cn(...classes: (string | boolean | undefined | null)[]) {
   return classes.filter(Boolean).join(" ");
+}
+
+export function toQueryString(params: Record<string, string | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value) search.set(key, value);
+  }
+  return search.toString();
 }
