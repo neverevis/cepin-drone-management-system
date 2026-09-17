@@ -1,0 +1,143 @@
+// Schema do Sistema CEPIN - Controle do Drone DJI Mavic 3 Multispectral
+// CEPIN - Centro de Pesquisa e Inovação em Inteligência Artificial e Robótica Agrícola
+// IFSP - Câmpus Araraquara
+//
+// Observação: o SQLite não suporta enums nativos no Prisma, portanto os campos
+// que representam conjuntos fixos de valores (Role, TipoEquipamento, Status, etc.)
+// são armazenados como String e validados na camada de aplicação (ver src/lib/enums.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("PILOTO") // ADMIN | TECNICO | PILOTO
+  registration String? // matrícula / SIAPE
+  phone        String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  loans              Loan[]              @relation("PilotoRetirada")
+  authorizedLoans    Loan[]              @relation("AutorizadoPor")
+  usageLogs          UsageLog[]          @relation("RegistradoPor")
+  maintenanceRecords MaintenanceRecord[] @relation("ResponsavelManutencao")
+
+  @@map("users")
+}
+
+model Equipment {
+  id                String   @id @default(cuid())
+  name              String
+  type              String // ver src/lib/enums.ts -> TIPOS_EQUIPAMENTO
+  serialNumber      String?  @unique
+  model             String?
+  status            String   @default("DISPONIVEL") // DISPONIVEL | EM_USO | EM_MANUTENCAO | INATIVO
+  notes             String?
+  acquisitionDate   DateTime?
+  batteryCycles     Int?     @default(0)
+  batteryCycleLimit Int?     @default(200)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  loanItems          LoanItem[]
+  maintenanceRecords MaintenanceRecord[]
+  usageLogsBattery   UsageLog[]          @relation("BateriaUsada")
+
+  @@map("equipment")
+}
+
+model Loan {
+  id                 String    @id @default(cuid())
+  code               String    @unique
+  pilotId            String
+  pilot              User      @relation("PilotoRetirada", fields: [pilotId], references: [id])
+  authorizedById     String?
+  authorizedBy       User?     @relation("AutorizadoPor", fields: [authorizedById], references: [id])
+  purpose            String
+  location           String?
+  projectName        String?
+  checkoutAt         DateTime  @default(now())
+  scheduledReturnAt  DateTime
+  returnAt           DateTime?
+  status             String    @default("ABERTA") // ABERTA | DEVOLVIDA | CANCELADA
+  preFlightChecklist String? // JSON string com checklist marcado no ato da retirada
+  checkoutNotes      String?
+  returnNotes        String?
+  returnConditionOk  Boolean?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  items     LoanItem[]
+  usageLogs UsageLog[]
+
+  @@map("loans")
+}
+
+model LoanItem {
+  id                  String    @id @default(cuid())
+  loanId              String
+  loan                Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  equipmentId         String
+  equipment           Equipment @relation(fields: [equipmentId], references: [id])
+  conditionOut        String?
+  conditionIn         String?
+  returned            Boolean   @default(false)
+  returnedAt          DateTime?
+  batteryCyclesBefore Int?
+  batteryCyclesAfter  Int?
+
+  @@unique([loanId, equipmentId])
+  @@map("loan_items")
+}
+
+model UsageLog {
+  id                 String    @id @default(cuid())
+  loanId             String
+  loan               Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  flightDate         DateTime
+  takeoffTime        String?
+  landingTime        String?
+  durationMinutes    Int
+  flightType         String    @default("OUTRO")
+  location           String?
+  weatherConditions  String?
+  batteryEquipmentId String?
+  batteryEquipment   Equipment? @relation("BateriaUsada", fields: [batteryEquipmentId], references: [id])
+  batteryCyclesUsed  Int?      @default(1)
+  incidents          String?
+  notes              String?
+  registeredById     String
+  registeredBy       User      @relation("RegistradoPor", fields: [registeredById], references: [id])
+  createdAt          DateTime  @default(now())
+
+  @@map("usage_logs")
+}
+
+model MaintenanceRecord {
+  id               String    @id @default(cuid())
+  equipmentId      String
+  equipment        Equipment @relation(fields: [equipmentId], references: [id])
+  type             String // PREVENTIVA | CORRETIVA | CALIBRACAO | ATUALIZACAO_FIRMWARE | LIMPEZA
+  status           String    @default("AGENDADA") // AGENDADA | EM_ANDAMENTO | CONCLUIDA | CANCELADA
+  scheduledDate    DateTime?
+  completedDate    DateTime?
+  description      String
+  cost             Float?
+  externalProvider String?
+  responsibleId    String?
+  responsible      User?     @relation("ResponsavelManutencao", fields: [responsibleId], references: [id])
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@map("maintenance_records")
+}
