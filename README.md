@@ -10,6 +10,7 @@ controle de acesso por perfil (aplicado no backend), geração de documentos
 institucionais em PDF, relatórios com exportação e testes automatizados.
 
 > Documentação complementar na pasta [`docs/`](./docs):
+> [Como Executar (passo a passo)](./docs/COMO_EXECUTAR.md) ·
 > [Arquitetura](./docs/ARQUITETURA.md) ·
 > [Modelo de Dados](./docs/MODELO_DE_DADOS.md) ·
 > [Manual de Uso](./docs/MANUAL_DE_USO.md) ·
@@ -35,6 +36,8 @@ institucionais em PDF, relatórios com exportação e testes automatizados.
 - (Opcional) Docker e Docker Compose
 
 ## Instalação e execução local
+
+> Guia detalhado com troubleshooting: [docs/COMO_EXECUTAR.md](./docs/COMO_EXECUTAR.md).
 
 ```bash
 # 1. Instalar dependências
