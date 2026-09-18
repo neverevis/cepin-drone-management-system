@@ -103,7 +103,11 @@ esse modo que o fluxo completo do sistema foi validado.
 
 ---
 
-## Opção 2 — Docker
+## Opção 2 — Docker (a mais simples: clone e suba)
+
+Esta é a forma recomendada para rodar em um computador novo, sem precisar
+instalar Node.js nem rodar comandos de instalação/seed manualmente — o
+container faz tudo sozinho ao subir.
 
 ### Pré-requisitos
 
@@ -117,30 +121,31 @@ git clone https://github.com/neverevis/cepin-drone-management-system.git
 cd cepin-drone-management-system
 ```
 
-### Passo 2 — Configurar variáveis de ambiente
-
-```bash
-cp .env.example .env
-```
-
-### Passo 3 — Subir o container
+### Passo 2 — Subir o container
 
 ```bash
 docker compose up --build
 ```
 
-Na primeira vez, isso builda a imagem (alguns minutos) e já cria o banco de
-dados (o `Dockerfile` roda `prisma db push` automaticamente ao iniciar).
+Não é preciso rodar `npm install`, `cp .env.example .env` nem nenhum
+comando de banco de dados — ao subir, o container automaticamente:
 
-### Passo 4 — Popular com dados de demonstração
+1. Builda a imagem e instala todas as dependências.
+2. Cria/sincroniza o banco de dados (`prisma db push`).
+3. **Detecta que é a primeira execução** (banco vazio) e já popula com os
+   dados de demonstração (4 usuários, o drone, acessórios e as 4
+   baterias) — ver [`docker-entrypoint.sh`](../docker-entrypoint.sh).
+4. Inicia o servidor.
 
-Em outro terminal, com o container já rodando:
+Em execuções seguintes (`docker compose up` de novo, ou depois de
+reiniciar), esse seed automático é pulado — o sistema detecta que já
+existem usuários cadastrados e preserva os dados reais que você já tiver
+criado.
 
-```bash
-docker compose exec app npm run db:seed
-```
+Aguarde a mensagem `Iniciando o servidor...` (ou `Ready` do Next.js) no
+terminal antes de acessar.
 
-### Passo 5 — Acessar
+### Passo 3 — Acessar
 
 Abra **http://localhost:3000** e faça login como no passo a passo local
 (ex.: `admin@cepin.ifsp.edu.br` / `cepin@2024`).
@@ -159,7 +164,8 @@ Para parar: `Ctrl+C` no terminal do `docker compose up`, ou
 | Porta 3000 já em uso | Outro processo está usando a porta. Pare-o, ou rode com `PORT=3001 npm run start` (o `dev` também aceita `-p 3001`). |
 | Login não funciona / redireciona sempre pro login | Confira se `NEXTAUTH_URL` no `.env` bate com a URL que você está acessando (ex.: ambos `http://localhost:3000`), e se `npm run db:seed` foi executado. |
 | Erro ao gerar o PDF do Termo de Retirada | Certifique-se de estar usando o build normal (`npm run build && npm run start`, ou Docker) — isso já está corrigido no repositório, mas se você alterar `next.config.mjs`, mantenha a opção `experimental.serverComponentsExternalPackages` com `pdfkit`. |
-| Quero apagar tudo e recomeçar do zero | `npm run db:reset` (⚠️ apaga todos os dados atuais e recria o seed). |
+| Quero apagar tudo e recomeçar do zero (local) | `npm run db:reset` (⚠️ apaga todos os dados atuais e recria o seed). |
+| Quero apagar tudo e recomeçar do zero (Docker) | `docker compose down -v` (⚠️ remove o volume do banco) e depois `docker compose up --build` de novo — o seed automático roda de novo por detectar banco vazio. |
 
 Se algo não listado aqui acontecer, veja os logs do terminal onde o `npm
 run dev`/`start` (ou `docker compose up`) está rodando — a mensagem de erro

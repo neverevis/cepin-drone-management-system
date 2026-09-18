@@ -29,8 +29,11 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/next.config.mjs ./next.config.mjs
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 EXPOSE 3000
-# Ao subir o container, sincroniza o schema com o banco (útil para SQLite em
-# desenvolvimento/demonstração) e inicia o servidor Next.js.
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npm run start"]
+# Ao subir o container: sincroniza o schema do banco, popula com os dados de
+# demonstração se for a primeira execução (banco vazio) e inicia o servidor.
+# Assim "docker compose up" já deixa o sistema pronto para uso.
+CMD ["./docker-entrypoint.sh"]

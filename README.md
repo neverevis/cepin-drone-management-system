@@ -92,20 +92,31 @@ Todos criados pelo `npm run db:seed`, com a senha **`cepin@2024`**:
 
 ## Executando com Docker
 
+Esta é a forma mais simples de rodar o sistema em uma máquina nova: não é
+necessário instalar Node.js, nem rodar `npm install`, nem popular o banco
+manualmente — um único comando faz tudo.
+
 ```bash
-cp .env.example .env
+git clone https://github.com/neverevis/cepin-drone-management-system.git
+cd cepin-drone-management-system
 docker compose up --build
 ```
 
-Na primeira execução, popule o banco com os dados de demonstração:
-
-```bash
-docker compose exec app npm run db:seed
-```
+Isso builda a imagem, instala as dependências, cria o banco de dados e —
+na primeira execução (banco vazio) — já popula automaticamente com os
+dados de demonstração (ver [docker-entrypoint.sh](./docker-entrypoint.sh)).
+Em execuções seguintes, o seed automático é ignorado (o sistema detecta que
+já existem usuários cadastrados), preservando os dados reais que você
+tiver criado.
 
 O serviço fica disponível em **http://localhost:3000**. O arquivo do banco
 SQLite é persistido em um volume Docker (`cepin_db_data`), sobrevivendo a
 reinicializações do container.
+
+> Não é preciso criar um `.env` para o Docker funcionar — o
+> `docker-compose.yml` já traz valores padrão. Para produção, defina
+> `NEXTAUTH_SECRET` com uma chave própria (`cp .env.example .env` e edite,
+> ou exporte a variável antes de subir o container).
 
 ## Usando PostgreSQL em produção
 
